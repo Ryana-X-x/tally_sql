@@ -1,0 +1,90 @@
+# =============================================================================
+# TallySQL Migrator .gitignore
+# =============================================================================
+
+# CRITICAL: Never commit these
+.env
+*.env.local
+*.env.production
+*.env.staging
+
+# Credentials / secrets
+secrets/
+credentials/
+
+# Production data exports (PROHIBITED - no CSV/data extraction)
+*.csv
+*.data
+*.dat
+*.tsv
+exports/
+extracted/
+
+# Log files
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env.bak/
+*.venv
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Generated schema (keep the file, not secrets - schema is OK to commit)
+# schema/discovered_schema.json  <- DO commit this after review
+
+# Generated SQL (review before committing)
+# sql/schema.sql                 <- DO commit after review
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Lock files (not needed in repo)
+*.lock
+pip.lock

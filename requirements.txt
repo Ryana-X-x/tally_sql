@@ -1,0 +1,11 @@
+# Core dependencies
+pyodbc>=4.0.39
+requests>=2.31.0
+python-dotenv>=1.0.0
+urllib3>=2.0.0
+
+# Development dependencies (not required in production)
+# pytest>=7.4.0
+# pytest-cov>=4.1.0
+# mypy>=1.5.0
+# ruff>=0.1.0

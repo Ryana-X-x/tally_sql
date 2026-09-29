@@ -1,0 +1,9 @@
+{
+  "_comment": "This file is populated by: python -m tally_migrator discover",
+  "_note": "This file contains SCHEMA METADATA ONLY - not Tally row data.",
+  "version": "1.0",
+  "discovery_timestamp": "",
+  "tally_host": "",
+  "tally_company": "",
+  "collections": {}
+}
