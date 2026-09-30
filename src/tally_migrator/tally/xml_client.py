@@ -13,7 +13,9 @@ Reference:
 
 from __future__ import annotations
 
+import codecs
 import logging
+import re
 from typing import Any, Generator, Optional
 from xml.etree import ElementTree as ET
 
@@ -455,10 +457,13 @@ class XMLTallyClient(BaseTallyClient):
     def _parse_collection_streaming(
         self, xml_source: Any, tag: str
     ) -> Generator[dict[str, Any], None, None]:
-        """Parse XML iteratively using pyexpat streaming parser for prefix safety and bounded memory."""
+        """Parse XML iteratively using pyexpat streaming parser with pre-parse sanitization."""
         import pyexpat
+
         target_tag = tag.upper()
         parser = StreamingTallyXMLParser(target_tag)
+        sanitizer = StreamingXMLSanitizer()
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
         try:
             if isinstance(xml_source, str):
@@ -497,13 +502,38 @@ class XMLTallyClient(BaseTallyClient):
                 if not chunk:
                     continue
                 if isinstance(chunk, str):
-                    chunk = chunk.encode("utf-8")
+                    chunk_text = chunk
+                else:
+                    chunk_text = decoder.decode(chunk, final=False)
+
+                sanitized_text = sanitizer.feed(chunk_text, is_final=False)
+                if not sanitized_text:
+                    continue
+
+                chunk_bytes = sanitized_text.encode("utf-8")
                 if first_chunk:
-                    if chunk.startswith(b"\xef\xbb\xbf"):
-                        chunk = chunk[3:]
+                    if chunk_bytes.startswith(b"\xef\xbb\xbf"):
+                        chunk_bytes = chunk_bytes[3:]
                     first_chunk = False
 
-                elements = parser.feed(chunk)
+                elements = parser.feed(chunk_bytes)
+                for elem in elements:
+                    parsed = _parse_xml_element(elem)
+                    if isinstance(parsed, dict):
+                        yield parsed
+                    elem.clear()
+
+            # Flush tail
+            tail_text = decoder.decode(b"", final=True)
+            final_text = sanitizer.feed(tail_text, is_final=True) + sanitizer.flush()
+            if final_text:
+                chunk_bytes = final_text.encode("utf-8")
+                if first_chunk:
+                    if chunk_bytes.startswith(b"\xef\xbb\xbf"):
+                        chunk_bytes = chunk_bytes[3:]
+                    first_chunk = False
+
+                elements = parser.feed(chunk_bytes)
                 for elem in elements:
                     parsed = _parse_xml_element(elem)
                     if isinstance(parsed, dict):
@@ -518,12 +548,87 @@ class XMLTallyClient(BaseTallyClient):
                         yield parsed
                     elem.clear()
 
+            if sanitizer.sanitized_count > 0:
+                code_points_str = ", ".join(sorted(sanitizer.sanitized_code_points))
+                logger.info(
+                    "Sanitized %d invalid XML character reference(s) for collection/tag '%s' (code points: %s)",
+                    sanitizer.sanitized_count, tag, code_points_str
+                )
+
         except pyexpat.ExpatError as exc:
             logger.error("XML streaming parse error for tag '%s': %s", tag, exc)
             raise TallyQueryError(tag, f"XML streaming parse error: {exc}") from exc
         except Exception as exc:
             logger.error("Streaming XML extraction error for tag '%s': %s", tag, exc)
             raise TallyQueryError(tag, f"XML streaming extraction error: {exc}") from exc
+
+
+NUMERIC_ENTITY_REGEX = re.compile(r"&#([0-9]+);|&#[xX]([0-9a-fA-F]+);")
+INCOMPLETE_NUMERIC_ENTITY_REGEX = re.compile(r"&(?:#[0-9]*|#[xX][0-9a-fA-F]*)?$")
+RAW_CONTROL_CHAR_REGEX = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def is_valid_xml_character(code_point: int) -> bool:
+    """Check if code_point is a legal XML 1.0 character according to W3C specification."""
+    if code_point in (0x9, 0xA, 0xD):
+        return True
+    if 0x20 <= code_point <= 0xD7FF:
+        return True
+    if 0xE000 <= code_point <= 0xFFFD:
+        return True
+    if 0x10000 <= code_point <= 0x10FFFF:
+        return True
+    return False
+
+
+class StreamingXMLSanitizer:
+    """Stateful streaming sanitizer for malformed XML character references and control bytes.
+
+    Handles incomplete entity references split across HTTP stream chunk boundaries
+    (e.g., chunk 1: "... &#x", chunk 2: "1F; ..."). Sanitizes illegal XML 1.0 character
+    references (such as &#0;, &#x0;, &#x1F;, &#31;) and raw control bytes before XML parsing.
+    """
+
+    def __init__(self):
+        self.buffer = ""
+        self.sanitized_count = 0
+        self.sanitized_code_points: set[str] = set()
+
+    def feed(self, chunk_text: str, is_final: bool = False) -> str:
+        data = self.buffer + chunk_text
+        self.buffer = ""
+
+        if not is_final:
+            m = INCOMPLETE_NUMERIC_ENTITY_REGEX.search(data)
+            if m:
+                idx = m.start()
+                self.buffer = data[idx:]
+                data = data[:idx]
+
+        def _replace_entity(match: re.Match) -> str:
+            dec_str = match.group(1)
+            hex_str = match.group(2)
+            cp = int(dec_str) if dec_str is not None else int(hex_str, 16)
+
+            if is_valid_xml_character(cp):
+                return match.group(0)
+            else:
+                self.sanitized_count += 1
+                self.sanitized_code_points.add(f"U+{cp:04X}")
+                return ""
+
+        def _replace_raw_control(match: re.Match) -> str:
+            cp = ord(match.group(0))
+            self.sanitized_count += 1
+            self.sanitized_code_points.add(f"U+{cp:04X}")
+            return ""
+
+        res = RAW_CONTROL_CHAR_REGEX.sub(_replace_raw_control, data)
+        res = NUMERIC_ENTITY_REGEX.sub(_replace_entity, res)
+        return res
+
+    def flush(self) -> str:
+        return self.feed("", is_final=True)
 
 
 class StreamingTallyXMLParser:

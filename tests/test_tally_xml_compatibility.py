@@ -1,13 +1,16 @@
-"""Regression tests for Tally XML parsing compatibility and error propagation.
+"""Regression tests for Tally XML parsing compatibility, sanitization, and error propagation.
 
 Verifies:
 1. Unbound namespace prefix handling (UDF:*, sys:* tags)
-2. Preservation of UDF/custom fields in Ledger, StockItem, Voucher
-3. Bounded-memory streaming with pyexpat
-4. Error propagation (parser exceptions are NOT swallowed)
-5. Distinguishing legitimately EMPTY collections from FAILED collections
-6. Dry-run failure on parse errors
-7. Full-sync refusal on critical extraction failures
+2. Invalid XML 1.0 numeric character references (&#0;, &#x0;, &#x1F;, &#31;, &#xB;, etc.)
+3. Preservation of legal character references (&#x9;, &#xA;, &#xD;, &#x20;, &#xA0;)
+4. Preservation of high valid Unicode (Hindi/Indian scripts, accents, currency, emojis)
+5. Streaming chunk boundary buffering for split entity references (e.g. "... &#x" + "1F; ...")
+6. Preservation of UDF/custom fields in Ledger, StockItem, Voucher
+7. Error propagation (genuine parser exceptions are NOT swallowed)
+8. Distinguishing legitimately EMPTY collections from FAILED collections
+9. Dry-run failure on parse errors
+10. Full-sync refusal on critical extraction failures
 """
 
 from __future__ import annotations
@@ -28,7 +31,11 @@ from tally_migrator.schema.models import (
     DiscoveredSchema,
     FieldType,
 )
-from tally_migrator.tally.xml_client import XMLTallyClient
+from tally_migrator.tally.xml_client import (
+    StreamingXMLSanitizer,
+    XMLTallyClient,
+    is_valid_xml_character,
+)
 
 
 @pytest.fixture
@@ -117,6 +124,22 @@ REALISTIC_TALLY_XML_WITH_UDF = """<ENVELOPE>
 
 
 class TestTallyXMLCompatibility:
+    def test_xml_character_validity_rules(self):
+        """Verify legal vs illegal XML 1.0 code point classification."""
+        assert is_valid_xml_character(0x9) is True   # Tab
+        assert is_valid_xml_character(0xA) is True   # LF
+        assert is_valid_xml_character(0xD) is True   # CR
+        assert is_valid_xml_character(0x20) is True  # Space
+        assert is_valid_xml_character(0x0) is False  # NULL
+        assert is_valid_xml_character(0x1F) is False # Unit separator
+        assert is_valid_xml_character(0x8) is False  # Backspace
+        assert is_valid_xml_character(0xB) is False  # Vertical Tab
+        assert is_valid_xml_character(0xC) is False  # Form Feed
+        assert is_valid_xml_character(0xE) is False  # Shift Out
+        assert is_valid_xml_character(31) is False   # Decimal 31
+        assert is_valid_xml_character(0x2439) is True # Hindi Devanagari character
+        assert is_valid_xml_character(0x1F600) is True # Emoji U+1F600
+
     @patch("requests.Session.post")
     def test_unbound_namespace_prefix_tally_xml(self, mock_post, tally_config):
         """Verify XML parsing succeeds on XML containing unbound prefixes (UDF:*, sys:*)."""
@@ -184,8 +207,113 @@ class TestTallyXMLCompatibility:
         assert details["UDF:SUBCODE"] == "XYZ-99"
 
     @patch("requests.Session.post")
+    def test_invalid_character_number_reference_sanitization(self, mock_post, tally_config):
+        """Verify invalid XML 1.0 character references (&#0;, &#x0;, &#x1F;, &#31;) are sanitized."""
+        client = XMLTallyClient(tally_config)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = """<ENVELOPE>
+            <BODY>
+                <DATA>
+                    <COLLECTION>
+                        <LEDGER>
+                            <GUID>g-bad-1</GUID>
+                            <NAME>Alpha &#x0; Beta &#0; Gamma &#x1F; Delta &#31;</NAME>
+                            <DESCRIPTION>Clean &#xB; &#xC; &#xE;</DESCRIPTION>
+                        </LEDGER>
+                    </COLLECTION>
+                </DATA>
+            </BODY>
+        </ENVELOPE>"""
+        mock_post.return_value = mock_resp
+
+        records = list(client.fetch_all("Ledger"))
+        assert len(records) == 1
+        rec = records[0]
+        assert rec["GUID"] == "g-bad-1"
+        assert rec["NAME"] == "Alpha  Beta  Gamma  Delta"
+        assert rec["DESCRIPTION"] == "Clean"
+
+    @patch("requests.Session.post")
+    def test_legal_character_references_and_unicode_preserved(self, mock_post, tally_config):
+        """Verify legal character references and high Unicode (Hindi, accents, symbols) are preserved."""
+        client = XMLTallyClient(tally_config)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = """<ENVELOPE>
+            <BODY>
+                <DATA>
+                    <COLLECTION>
+                        <LEDGER>
+                            <GUID>g-unicode-1</GUID>
+                            <NAME>नमस्ते Enterprise &#2439; &#x9; Line2&#xA;Tab&#xD; Space&#x20;End</NAME>
+                            <UDF:HINDI_NAME>श्री गणेश स्टोर</UDF:HINDI_NAME>
+                        </LEDGER>
+                    </COLLECTION>
+                </DATA>
+            </BODY>
+        </ENVELOPE>"""
+        mock_post.return_value = mock_resp
+
+        records = list(client.fetch_all("Ledger"))
+        assert len(records) == 1
+        rec = records[0]
+        assert "नमस्ते Enterprise" in rec["NAME"]
+        assert "श्री गणेश स्टोर" in rec["UDF:HINDI_NAME"]
+
+    def test_numeric_references_split_across_chunks(self):
+        """Verify stateful StreamingXMLSanitizer handles entity references split across HTTP chunks."""
+        sanitizer = StreamingXMLSanitizer()
+
+        c1 = sanitizer.feed("<LEDGER><NAME>Acme &#x", is_final=False)
+        c2 = sanitizer.feed("1F; Traders &#", is_final=False)
+        c3 = sanitizer.feed("0; End</NAME></LEDGER>", is_final=False)
+        c4 = sanitizer.flush()
+
+        result = c1 + c2 + c3 + c4
+        assert result == "<LEDGER><NAME>Acme  Traders  End</NAME></LEDGER>"
+        assert sanitizer.sanitized_count == 2
+        assert "U+001F" in sanitizer.sanitized_code_points
+        assert "U+0000" in sanitizer.sanitized_code_points
+
+    @patch("requests.Session.post")
+    def test_regression_reference_to_invalid_character_number(self, mock_post, tally_config):
+        """Regression test specifically reproducing 'reference to invalid character number' from production."""
+        client = XMLTallyClient(tally_config)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        # Simulates real production Tally XML with invalid control references in Group & StockItem
+        mock_resp.text = """<ENVELOPE>
+            <BODY>
+                <DATA>
+                    <COLLECTION>
+                        <GROUP>
+                            <GUID>grp-prod-100</GUID>
+                            <NAME>Primary Group &#x1F;</NAME>
+                            <ALTERID>247</ALTERID>
+                        </GROUP>
+                        <STOCKITEM>
+                            <GUID>item-prod-50</GUID>
+                            <NAME>Item &#x0; Name</NAME>
+                            <ALTERID>51</ALTERID>
+                        </STOCKITEM>
+                    </COLLECTION>
+                </DATA>
+            </BODY>
+        </ENVELOPE>"""
+        mock_post.return_value = mock_resp
+
+        groups = list(client.fetch_all("Group"))
+        items = list(client.fetch_all("StockItem"))
+
+        assert len(groups) == 1
+        assert groups[0]["NAME"] == "Primary Group"
+        assert len(items) == 1
+        assert items[0]["NAME"] == "Item  Name"
+
+    @patch("requests.Session.post")
     def test_parser_failure_propagation(self, mock_post, tally_config):
-        """Verify malformed XML raises TallyQueryError rather than being swallowed."""
+        """Verify genuinely malformed XML raises TallyQueryError rather than being swallowed."""
         client = XMLTallyClient(tally_config)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
