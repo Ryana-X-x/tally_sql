@@ -565,7 +565,7 @@ class XMLTallyClient(BaseTallyClient):
 
 NUMERIC_ENTITY_REGEX = re.compile(r"&#([0-9]+);|&#[xX]([0-9a-fA-F]+);")
 INCOMPLETE_NUMERIC_ENTITY_REGEX = re.compile(r"&(?:#[0-9]*|#[xX][0-9a-fA-F]*)?$")
-RAW_CONTROL_CHAR_REGEX = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+RAW_CONTROL_CHAR_REGEX = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
 def is_valid_xml_character(code_point: int) -> bool:
