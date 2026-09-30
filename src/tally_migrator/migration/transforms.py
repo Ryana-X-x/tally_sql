@@ -171,36 +171,56 @@ def transform_amount(
         multiplier = -1
 
     # Remove commas (e.g. "1,234.56")
-    raw = raw.replace(",", "")
+    clean_raw = raw.replace(",", "")
 
     try:
-        amount = Decimal(raw) * multiplier
+        amount = Decimal(clean_raw) * multiplier
         return amount
     except InvalidOperation:
-        logger.warning(
-            "Cannot parse amount in '%s.%s': %r (record=%s) - using NULL",
-            collection, field, value, record_id,
-        )
-        return None
+        pass
+
+    # Extract primary numeric value if string contains UOM/Rate suffixes (e.g. '11593.00 Pcs.', '9.23/Pcs.', '5464.00 Pcs. = 20.24 Case')
+    m = re.search(r"[-+]?\s*[\d,]+(?:\.\d+)?", raw)
+    if m:
+        num_str = m.group(0).replace(",", "").replace(" ", "")
+        try:
+            amount = Decimal(num_str) * multiplier
+            return amount
+        except InvalidOperation:
+            pass
+
+    logger.warning(
+        "Cannot parse amount in '%s.%s': %r (record=%s) - using NULL",
+        collection, field, value, record_id,
+    )
+    return None
 
 
 def transform_quantity(value: Any, collection: str = "", field: str = "",
                        record_id: Optional[str] = None) -> Optional[Decimal]:
-    """Transform a Tally quantity (may include UOM suffix, e.g. '5 KG')."""
+    """Transform a Tally quantity (may include UOM suffix, e.g. '5 KG', '5464.00 Pcs. = 20.24 Case')."""
     if value is None:
         return None
     raw = str(value).strip()
     if not raw:
         return None
-    # Remove UOM suffix (letters after the number)
-    num_part = re.split(r"[A-Za-z]", raw)[0].strip().replace(",", "")
-    if not num_part:
-        return None
+
+    clean_raw = raw.replace(",", "")
     try:
-        return Decimal(num_part)
+        return Decimal(clean_raw)
     except InvalidOperation:
-        logger.warning("Cannot parse quantity '%s.%s': %r", collection, field, value)
-        return None
+        pass
+
+    m = re.search(r"[-+]?\s*[\d,]+(?:\.\d+)?", raw)
+    if m:
+        num_str = m.group(0).replace(",", "").replace(" ", "")
+        try:
+            return Decimal(num_str)
+        except InvalidOperation:
+            pass
+
+    logger.warning("Cannot parse quantity '%s.%s': %r", collection, field, value)
+    return None
 
 
 def transform_boolean(

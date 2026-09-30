@@ -102,6 +102,13 @@ class TestTransformAmount:
     def test_zero(self):
         assert transform_amount("0") == Decimal(0)
 
+    def test_tally_quantity_and_rate_strings(self):
+        assert transform_amount("11593.00 Pcs.") == Decimal("11593.00")
+        assert transform_amount("9.23/Pcs.") == Decimal("9.23")
+        assert transform_amount("5464.00 Pcs. = 20.24 Case") == Decimal("5464.00")
+        assert transform_amount("0.00 LTR.") == Decimal("0.00")
+        assert transform_amount("4212.00 Kgs. = 351.00 Case") == Decimal("4212.00")
+
 
 class TestTransformBoolean:
     def test_yes_is_true(self):
