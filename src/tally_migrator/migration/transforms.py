@@ -58,7 +58,11 @@ def transform_text(
     """Transform a Tally text value to a Python str or None."""
     if value is None:
         return None
-    s = str(value).strip()
+    if isinstance(value, (dict, list)):
+        import json
+        s = json.dumps(value, ensure_ascii=False).strip()
+    else:
+        s = str(value).strip()
     if not s:
         return None
     if max_length and len(s) > max_length:

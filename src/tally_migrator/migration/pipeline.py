@@ -110,8 +110,9 @@ class MigrationPipeline:
                 )
                 result.collections.append(stats)
 
-            result.success = all(
-                c.rows_failed == 0 for c in result.collections
+            result.success = (
+                len(result.collections) > 0
+                and all(c.rows_failed == 0 and len(c.errors) == 0 for c in result.collections)
             )
 
         except Exception as exc:
@@ -150,8 +151,9 @@ class MigrationPipeline:
                 )
                 result.collections.append(stats)
 
-            result.success = all(
-                c.rows_failed == 0 for c in result.collections
+            result.success = (
+                len(result.collections) > 0
+                and all(c.rows_failed == 0 and len(c.errors) == 0 for c in result.collections)
             )
 
         except Exception as exc:
@@ -270,6 +272,8 @@ class MigrationPipeline:
             error_occurred = True
             error_msg = str(exc)
             stats.errors.append(error_msg)
+            if stats.rows_failed == 0:
+                stats.rows_failed = 1
 
         # Update sync state - never advance state past failed records
         if self._state_manager and not self.dry_run:

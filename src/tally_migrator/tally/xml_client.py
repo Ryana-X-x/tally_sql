@@ -329,9 +329,13 @@ class XMLTallyClient(BaseTallyClient):
     ) -> Generator[dict[str, Any], None, None]:
         """Yield all records from a Tally collection using streaming parser."""
         xml = self._build_collection_request(collection_name, fields=fields, company=company)
-        resp = self._post(xml)
+        resp = self._post_stream(xml)
         tag = collection_name.upper()
-        yield from self._parse_collection_streaming(resp, tag)
+        try:
+            yield from self._parse_collection_streaming(resp, tag)
+        finally:
+            if hasattr(resp, "close"):
+                resp.close()
 
     def fetch_since(
         self,
@@ -359,9 +363,13 @@ class XMLTallyClient(BaseTallyClient):
             collection_name, fields=fields, company=company,
             filter_expr=filter_expr
         )
-        resp = self._post(xml)
+        resp = self._post_stream(xml)
         tag = collection_name.upper()
-        yield from self._parse_collection_streaming(resp, tag)
+        try:
+            yield from self._parse_collection_streaming(resp, tag)
+        finally:
+            if hasattr(resp, "close"):
+                resp.close()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -369,6 +377,15 @@ class XMLTallyClient(BaseTallyClient):
 
     def _post(self, xml: str) -> str:
         """POST XML to Tally HTTP server and return response text."""
+        resp = self._post_stream(xml)
+        try:
+            return resp.text
+        finally:
+            if hasattr(resp, "close"):
+                resp.close()
+
+    def _post_stream(self, xml: str) -> Any:
+        """POST XML to Tally HTTP server and return streaming response object."""
         if self._session is None:
             self._session = _build_session(self.config.timeout_seconds)
 
@@ -379,9 +396,10 @@ class XMLTallyClient(BaseTallyClient):
                 data=xml.encode(self.config.xml_encoding, errors="replace"),
                 headers={"Content-Type": "application/xml"},
                 timeout=self.config.timeout_seconds,
+                stream=True,
             )
             resp.raise_for_status()
-            return resp.text
+            return resp
         except requests.exceptions.Timeout:
             raise TallyTimeoutError(
                 self.config.host, self.config.port,
@@ -437,30 +455,128 @@ class XMLTallyClient(BaseTallyClient):
     def _parse_collection_streaming(
         self, xml_source: Any, tag: str
     ) -> Generator[dict[str, Any], None, None]:
-        """Parse XML iteratively using streaming iterparse for memory efficiency."""
+        """Parse XML iteratively using pyexpat streaming parser for prefix safety and bounded memory."""
+        import pyexpat
+        target_tag = tag.upper()
+        parser = StreamingTallyXMLParser(target_tag)
+
         try:
-            import io
             if isinstance(xml_source, str):
                 if xml_source.startswith("\ufeff"):
                     xml_source = xml_source[1:]
-                stream = io.BytesIO(xml_source.encode("utf-8"))
+                chunks = [xml_source.encode("utf-8")]
             elif isinstance(xml_source, bytes):
                 if xml_source.startswith(b"\xef\xbb\xbf"):
                     xml_source = xml_source[3:]
-                stream = io.BytesIO(xml_source)
-            elif hasattr(xml_source, "raw"):
-                stream = xml_source.raw
+                chunks = [xml_source]
+            elif hasattr(xml_source, "iter_content") and not hasattr(xml_source.iter_content, "return_value"):
+                chunks = xml_source.iter_content(chunk_size=65536)
+            elif hasattr(xml_source, "text") and isinstance(xml_source.text, str) and xml_source.text:
+                chunks = [xml_source.text.encode("utf-8")]
+            elif hasattr(xml_source, "raw") and hasattr(xml_source.raw, "read"):
+                def _stream_raw_gen():
+                    while True:
+                        c = xml_source.raw.read(65536)
+                        if not c:
+                            break
+                        yield c
+                chunks = _stream_raw_gen()
+            elif hasattr(xml_source, "read"):
+                def _stream_read_gen():
+                    while True:
+                        c = xml_source.read(65536)
+                        if not c:
+                            break
+                        yield c
+                chunks = _stream_read_gen()
             else:
-                stream = xml_source
+                chunks = [xml_source]
 
-            for event, elem in ET.iterparse(stream, events=("end",)):
-                if elem.tag.upper() == tag.upper():
+            first_chunk = True
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8")
+                if first_chunk:
+                    if chunk.startswith(b"\xef\xbb\xbf"):
+                        chunk = chunk[3:]
+                    first_chunk = False
+
+                elements = parser.feed(chunk)
+                for elem in elements:
                     parsed = _parse_xml_element(elem)
                     if isinstance(parsed, dict):
                         yield parsed
                     elem.clear()
-        except ET.ParseError as exc:
-            logger.error("XML streaming parse error: %s", exc)
+
+            if not first_chunk:
+                final_elements = parser.close()
+                for elem in final_elements:
+                    parsed = _parse_xml_element(elem)
+                    if isinstance(parsed, dict):
+                        yield parsed
+                    elem.clear()
+
+        except pyexpat.ExpatError as exc:
+            logger.error("XML streaming parse error for tag '%s': %s", tag, exc)
+            raise TallyQueryError(tag, f"XML streaming parse error: {exc}") from exc
+        except Exception as exc:
+            logger.error("Streaming XML extraction error for tag '%s': %s", tag, exc)
+            raise TallyQueryError(tag, f"XML streaming extraction error: {exc}") from exc
+
+
+class StreamingTallyXMLParser:
+    """Incremental streaming XML parser using pyexpat without namespace enforcement.
+
+    Parses Tally XML responses containing arbitrary or undeclared namespace prefixes
+    (e.g., <UDF:FIELD_NAME>, <sys:PARAM>) without raising unbound prefix errors.
+    Yields ET.Element objects for matching target_tag in bounded memory.
+    """
+
+    def __init__(self, target_tag: str):
+        import pyexpat
+        self.target_tag = target_tag.upper()
+        # Create pyexpat parser WITHOUT namespace_separator -> disables namespace enforcement
+        self._parser = pyexpat.ParserCreate()
+        self._parser.StartElementHandler = self._start_element
+        self._parser.EndElementHandler = self._end_element
+        self._parser.CharacterDataHandler = self._char_data
+        self._stack: list[ET.Element] = []
+        self._pending_records: list[ET.Element] = []
+
+    def feed(self, chunk: bytes) -> list[ET.Element]:
+        self._parser.Parse(chunk, False)
+        recs = self._pending_records
+        self._pending_records = []
+        return recs
+
+    def close(self) -> list[ET.Element]:
+        self._parser.Parse(b"", True)
+        recs = self._pending_records
+        self._pending_records = []
+        return recs
+
+    def _start_element(self, name: str, attrs: dict[str, str]) -> None:
+        elem = ET.Element(name, attrs)
+        if self._stack:
+            self._stack[-1].append(elem)
+        self._stack.append(elem)
+
+    def _end_element(self, name: str) -> None:
+        if not self._stack:
+            return
+        elem = self._stack.pop()
+        if name.upper() == self.target_tag:
+            self._pending_records.append(elem)
+
+    def _char_data(self, data: str) -> None:
+        if self._stack:
+            top = self._stack[-1]
+            if top.text:
+                top.text += data
+            else:
+                top.text = data
 
 
 def _parse_xml_element(elem: ET.Element) -> Any:

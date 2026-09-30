@@ -103,6 +103,14 @@ class CollectionStats:
     duration_seconds: float = 0.0
     errors: list[str] = field(default_factory=list)
 
+    @property
+    def status(self) -> str:
+        if self.errors or self.rows_failed > 0:
+            return "FAILED"
+        if self.rows_read == 0:
+            return "EMPTY"
+        return "OK"
+
 
 @dataclass
 class MigrationResult:
@@ -145,26 +153,26 @@ class MigrationResult:
     def print_summary(self) -> None:
         print()
         if self.dry_run:
-            print("=" * 70)
+            print("=" * 95)
             print("DRY RUN SUMMARY (no data written)")
         else:
-            print("=" * 70)
+            print("=" * 95)
             print("MIGRATION SUMMARY")
-        print("=" * 70)
+        print("=" * 95)
         print(f"Run ID : {self.run_id}")
         print(f"Status : {'SUCCESS' if self.success else 'FAILED'}")
         print(f"Started: {self.start_time.strftime('%Y-%m-%dT%H:%M:%S UTC')}")
         dur = self.duration.total_seconds()
         print(f"Duration: {dur:.1f}s")
         print()
-        print(f"{'COLLECTION':<35} {'READ':>8} {'INSERTED':>10} {'UPDATED':>10} {'UNCHANGED':>10} {'FAILED':>8}")
-        print("-" * 87)
+        print(f"{'COLLECTION':<30} {'STATUS':<10} {'READ':>8} {'INSERTED':>10} {'UPDATED':>10} {'UNCHANGED':>10} {'FAILED':>8}")
+        print("-" * 95)
         for c in self.collections:
             print(
-                f"{c.name:<35} {c.rows_read:>8,} {c.rows_inserted:>10,} "
+                f"{c.name:<30} {c.status:<10} {c.rows_read:>8,} {c.rows_inserted:>10,} "
                 f"{c.rows_updated:>10,} {c.rows_unchanged:>10,} {c.rows_failed:>8,}"
             )
-        print("-" * 87)
+        print("-" * 95)
         print(
             f"{'TOTAL':<35} {self.total_read:>8,} {self.total_inserted:>10,} "
             f"{self.total_updated:>10,} {self.total_unchanged:>10,} {self.total_failed:>8,}"
