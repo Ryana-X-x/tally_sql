@@ -57,6 +57,8 @@ class CollectionMapping:
                 out[mapping.target_column] = raw[src_field]
             elif src_field.upper() in raw:
                 out[mapping.target_column] = raw[src_field.upper()]
+            elif src_field.lower() in raw:
+                out[mapping.target_column] = raw[src_field.lower()]
         # Report unmapped fields found in this record
         known_sources = {m.source_field.upper() for m in self.fields.values()}
         for key in raw:

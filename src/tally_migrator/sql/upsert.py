@@ -225,7 +225,7 @@ class BatchUpsertEngine:
         if not columns:
             return "1=1"
         checks = []
-        for col in columns[:10]:  # limit to avoid overly complex SQL
+        for col in columns:
             checks.append(
                 f"(tgt.[{col}] IS NULL AND src.[{col}] IS NOT NULL) OR "
                 f"(tgt.[{col}] IS NOT NULL AND src.[{col}] IS NULL) OR "

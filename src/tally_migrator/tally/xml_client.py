@@ -283,14 +283,26 @@ class XMLTallyClient(BaseTallyClient):
 
     def describe_collection(self, collection_name: str) -> dict[str, Any]:
         known = KNOWN_COLLECTIONS.get(collection_name, {})
-        # Try to fetch a single record to determine actual fields
-        fields = known.get("fields", [])
+        fields = list(known.get("fields", []))
+
+        # Attempt dynamic discovery if connected
+        if self._connected:
+            try:
+                # Fetch a sample record to discover fields
+                for record in self.fetch_all(collection_name, fields=None):
+                    for k in record.keys():
+                        if not k.startswith("@") and not k.startswith("_") and k not in fields:
+                            fields.append(k)
+                    break  # sample first record
+            except Exception as exc:
+                logger.debug("Dynamic field sampling failed for %s: %s", collection_name, exc)
+
         return {
             "name": collection_name,
             "category": known.get("category", "unknown"),
             "fields": [{"name": f, "type": "text"} for f in fields],
-            "key_field": known.get("key_field"),
-            "alteration_field": known.get("alteration_field"),
+            "key_field": known.get("key_field", "GUID"),
+            "alteration_field": known.get("alteration_field", "ALTERID"),
             "child_collections": known.get("child_collections", []),
         }
 
@@ -315,12 +327,11 @@ class XMLTallyClient(BaseTallyClient):
         filters: Optional[dict[str, Any]] = None,
         company: Optional[str] = None,
     ) -> Generator[dict[str, Any], None, None]:
-        """Yield all records from a Tally collection."""
+        """Yield all records from a Tally collection using streaming parser."""
         xml = self._build_collection_request(collection_name, fields=fields, company=company)
         resp = self._post(xml)
         tag = collection_name.upper()
-        for record in self._parse_collection(resp, tag):
-            yield record
+        yield from self._parse_collection_streaming(resp, tag)
 
     def fetch_since(
         self,
@@ -329,14 +340,7 @@ class XMLTallyClient(BaseTallyClient):
         fields: Optional[list[str]] = None,
         company: Optional[str] = None,
     ) -> Generator[dict[str, Any], None, None]:
-        """Yield records altered since since_marker.
-
-        TallyPrime tracks alterations via ALTERID (an incrementing integer).
-        We filter by ALTERID > last_known_alterid for masters.
-        For vouchers we filter by DATE or ALTERID depending on availability.
-
-        If since_marker is None, yields all records.
-        """
+        """Yield records altered since since_marker using streaming parser."""
         known = KNOWN_COLLECTIONS.get(collection_name, {})
         alteration_field = known.get("alteration_field", "ALTERID")
 
@@ -344,14 +348,11 @@ class XMLTallyClient(BaseTallyClient):
             yield from self.fetch_all(collection_name, fields=fields, company=company)
             return
 
-        # Build a filter expression for ALTERID-based filtering
-        # TDL filter: $$Number:$ALTERID > 12345
         filter_expr = None
         try:
             marker_int = int(since_marker)
             filter_expr = f"$$Number:${alteration_field} > {marker_int}"
         except (ValueError, TypeError):
-            # Fallback: date-based filter
             filter_expr = f"$DATE >= {since_marker}"
 
         xml = self._build_collection_request(
@@ -360,8 +361,7 @@ class XMLTallyClient(BaseTallyClient):
         )
         resp = self._post(xml)
         tag = collection_name.upper()
-        for record in self._parse_collection(resp, tag):
-            yield record
+        yield from self._parse_collection_streaming(resp, tag)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -370,7 +370,6 @@ class XMLTallyClient(BaseTallyClient):
     def _post(self, xml: str) -> str:
         """POST XML to Tally HTTP server and return response text."""
         if self._session is None:
-            # Auto-connect for test_connection calls before _connected is set
             self._session = _build_session(self.config.timeout_seconds)
 
         url = self.config.xml_base_url
@@ -411,7 +410,6 @@ class XMLTallyClient(BaseTallyClient):
                 FETCH_TEMPLATE.format(field=f) for f in fields
             )
         else:
-            # Fetch all known fields for this collection
             known_fields = KNOWN_COLLECTIONS.get(collection_name, {}).get("fields", [])
             if known_fields:
                 field_clauses = "\n            ".join(
@@ -424,8 +422,6 @@ class XMLTallyClient(BaseTallyClient):
         if filter_expr:
             safe_filter = filter_expr.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             filter_clause = f"<FILTER>{safe_filter}</FILTER>"
-            # Note: Full TDL filter syntax is complex; this is a simplified version
-            # Real implementation would use proper TDL filter syntax
 
         return COLLECTION_REQUEST_TEMPLATE.format(
             collection_name=collection_name,
@@ -436,47 +432,55 @@ class XMLTallyClient(BaseTallyClient):
 
     def _parse_collection(self, xml_text: str, tag: str) -> list[dict[str, Any]]:
         """Parse XML response and extract records as dicts."""
-        records = []
-        try:
-            # Handle potential encoding declaration issues
-            if xml_text.startswith("\ufeff"):
-                xml_text = xml_text[1:]
-
-            root = ET.fromstring(xml_text.encode("utf-8"))
-        except ET.ParseError as exc:
-            logger.error("XML parse error: %s", exc)
-            logger.debug("Raw XML (first 500 chars): %s", xml_text[:500])
-            return records
-
-        for elem in root.iter(tag):
-            record: dict[str, Any] = {}
-            for child in elem:
-                text = (child.text or "").strip()
-                record[child.tag] = text
-            # Also handle attributes
-            for attr_name, attr_val in elem.attrib.items():
-                record[f"@{attr_name}"] = attr_val
-            records.append(record)
-
-        return records
+        return list(self._parse_collection_streaming(xml_text, tag))
 
     def _parse_collection_streaming(
-        self, xml_text: str, tag: str
+        self, xml_source: Any, tag: str
     ) -> Generator[dict[str, Any], None, None]:
-        """Parse XML iteratively for large responses (reduces memory)."""
+        """Parse XML iteratively using streaming iterparse for memory efficiency."""
         try:
-            if xml_text.startswith("\ufeff"):
-                xml_text = xml_text[1:]
             import io
-            stream = io.StringIO(xml_text)
+            if isinstance(xml_source, str):
+                if xml_source.startswith("\ufeff"):
+                    xml_source = xml_source[1:]
+                stream = io.BytesIO(xml_source.encode("utf-8"))
+            elif isinstance(xml_source, bytes):
+                if xml_source.startswith(b"\xef\xbb\xbf"):
+                    xml_source = xml_source[3:]
+                stream = io.BytesIO(xml_source)
+            elif hasattr(xml_source, "raw"):
+                stream = xml_source.raw
+            else:
+                stream = xml_source
+
             for event, elem in ET.iterparse(stream, events=("end",)):
-                if elem.tag == tag:
-                    record: dict[str, Any] = {}
-                    for child in elem:
-                        record[child.tag] = (child.text or "").strip()
-                    for attr_name, attr_val in elem.attrib.items():
-                        record[f"@{attr_name}"] = attr_val
-                    yield record
-                    elem.clear()  # free memory
+                if elem.tag.upper() == tag.upper():
+                    parsed = _parse_xml_element(elem)
+                    if isinstance(parsed, dict):
+                        yield parsed
+                    elem.clear()
         except ET.ParseError as exc:
             logger.error("XML streaming parse error: %s", exc)
+
+
+def _parse_xml_element(elem: ET.Element) -> Any:
+    """Recursively parse an XML Element into a dict or scalar value."""
+    children = list(elem)
+    if not children:
+        return (elem.text or "").strip()
+
+    record: dict[str, Any] = {}
+    for child in children:
+        tag = child.tag
+        parsed_child = _parse_xml_element(child)
+        if tag in record:
+            if not isinstance(record[tag], list):
+                record[tag] = [record[tag]]
+            record[tag].append(parsed_child)
+        else:
+            record[tag] = parsed_child
+
+    for attr_name, attr_val in elem.attrib.items():
+        record[f"@{attr_name}"] = attr_val
+
+    return record

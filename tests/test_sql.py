@@ -67,6 +67,14 @@ class TestBatchUpsertEngine:
         assert res.inserted == 1
         assert mock_cursor.execute.called
 
+    def test_change_check_includes_all_columns(self):
+        mock_sql = MagicMock()
+        engine = BatchUpsertEngine(mock_sql, "dbo", "ledger", "guid")
+        cols = [f"col_{i}" for i in range(25)]
+        check_sql = engine._build_change_check(cols)
+        for c in cols:
+            assert f"tgt.[{c}]" in check_sql
+
 
 class TestSyncStateManager:
     def test_get_state_not_found(self, sql_config):

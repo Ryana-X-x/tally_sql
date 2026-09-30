@@ -107,6 +107,65 @@ class TestXMLTallyClient:
         assert len(records) == 1
         assert records[0]["ALTERID"] == "105"
 
+    @patch("requests.Session.post")
+    def test_xml_streaming_iterparse(self, mock_post, tally_config):
+        client = XMLTallyClient(tally_config)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = """<ENVELOPE>
+            <BODY>
+                <DATA>
+                    <COLLECTION>
+                        <LEDGER><GUID>g1</GUID><NAME>L1</NAME></LEDGER>
+                        <LEDGER><GUID>g2</GUID><NAME>L2</NAME></LEDGER>
+                    </COLLECTION>
+                </DATA>
+            </BODY>
+        </ENVELOPE>"""
+        mock_post.return_value = mock_resp
+
+        records = list(client.fetch_all("Ledger"))
+        assert len(records) == 2
+        assert records[0]["GUID"] == "g1"
+        assert records[1]["GUID"] == "g2"
+
+    @patch("requests.Session.post")
+    def test_xml_nested_child_collections_parse(self, mock_post, tally_config):
+        client = XMLTallyClient(tally_config)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = """<ENVELOPE>
+            <BODY>
+                <DATA>
+                    <COLLECTION>
+                        <VOUCHER>
+                            <GUID>v-100</GUID>
+                            <VOUCHERNUMBER>101</VOUCHERNUMBER>
+                            <ALLLEDGERENTRIES.LIST>
+                                <LEDGERNAME>Cash</LEDGERNAME>
+                                <AMOUNT>-100.00</AMOUNT>
+                            </ALLLEDGERENTRIES.LIST>
+                            <ALLLEDGERENTRIES.LIST>
+                                <LEDGERNAME>Sales</LEDGERNAME>
+                                <AMOUNT>100.00</AMOUNT>
+                            </ALLLEDGERENTRIES.LIST>
+                        </VOUCHER>
+                    </COLLECTION>
+                </DATA>
+            </BODY>
+        </ENVELOPE>"""
+        mock_post.return_value = mock_resp
+
+        records = list(client.fetch_all("Voucher"))
+        assert len(records) == 1
+        v = records[0]
+        assert v["GUID"] == "v-100"
+        legs = v["ALLLEDGERENTRIES.LIST"]
+        assert isinstance(legs, list)
+        assert len(legs) == 2
+        assert legs[0]["LEDGERNAME"] == "Cash"
+        assert legs[1]["LEDGERNAME"] == "Sales"
+
 
 class TestODBCTallyClient:
     @patch("pyodbc.connect")
