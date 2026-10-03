@@ -59,15 +59,28 @@ class CollectionMapping:
                 out[mapping.target_column] = raw[src_field.upper()]
             elif src_field.lower() in raw:
                 out[mapping.target_column] = raw[src_field.lower()]
-        # Report unmapped fields found in this record
+            else:
+                out[mapping.target_column] = None
+        # Report & preserve unmapped fields found in this record
         known_sources = {m.source_field.upper() for m in self.fields.values()}
-        for key in raw:
-            if key.upper() not in known_sources and key not in self.unmapped_fields:
-                self.unmapped_fields.append(key)
-                logger.warning(
-                    "Unmapped field '%s' in collection '%s' (record: %s)",
-                    key, self.source_collection, raw.get(self.key_field or "GUID", "?")
-                )
+        unmapped_data: dict[str, Any] = {}
+        for key, val in raw.items():
+            if key.upper() not in known_sources and not key.startswith("@"):
+                if key not in self.unmapped_fields:
+                    self.unmapped_fields.append(key)
+                if val is not None and val != "" and val != []:
+                    unmapped_data[key] = val
+
+        if unmapped_data:
+            import json
+            try:
+                out["raw_unmapped_json"] = json.dumps(unmapped_data, ensure_ascii=False, default=str)
+            except Exception as exc:
+                logger.debug("Failed serializing unmapped data for '%s': %s", self.source_collection, exc)
+                out["raw_unmapped_json"] = None
+        else:
+            out["raw_unmapped_json"] = None
+
         return out
 
 

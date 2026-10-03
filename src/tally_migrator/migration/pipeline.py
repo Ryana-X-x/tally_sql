@@ -44,6 +44,22 @@ class MigrationPipeline:
 
     def _setup(self) -> None:
         """Initialise clients, lock, and mapping."""
+        # Load mapper from discovered schema first
+        schema_path = self.config.migration.schema_dir / "discovered_schema.json"
+        if not schema_path.exists():
+            from tally_migrator.exceptions import SchemaValidationError
+            raise SchemaValidationError(f"No discovered schema found at {schema_path}. Run 'discover' first.")
+
+        from tally_migrator.migration.mapper import MigrationMapper
+        from tally_migrator.schema.discovery import SchemaDiscovery
+        schema = SchemaDiscovery.load(schema_path)
+        if not schema or not schema.collections:
+            from tally_migrator.exceptions import SchemaValidationError
+            raise SchemaValidationError(
+                [f"Discovered schema at {schema_path} is empty or missing collections."]
+            )
+
+        self._mapper = MigrationMapper(schema, self.config.sql.schema_name)
 
         from tally_migrator.sql.connection import SQLConnection
         from tally_migrator.sql.lock import SQLProcessLock
@@ -58,19 +74,6 @@ class MigrationPipeline:
             self._state_manager = SyncStateManager(self._sql, self.config)
             self._lock = SQLProcessLock(self._sql, self.config)
             self._lock.acquire(run_id=self.run_id)
-
-        # Load mapper from discovered schema
-        schema_path = self.config.migration.schema_dir / "discovered_schema.json"
-        if schema_path.exists():
-            from tally_migrator.migration.mapper import MigrationMapper
-            from tally_migrator.schema.discovery import SchemaDiscovery
-            schema = SchemaDiscovery.load(schema_path)
-            self._mapper = MigrationMapper(schema, self.config.sql.schema_name)
-        else:
-            logger.warning(
-                "No discovered schema found at %s. Run 'discover' first.",
-                schema_path,
-            )
 
     def _teardown(self) -> None:
         if self._lock:
@@ -183,8 +186,8 @@ class MigrationPipeline:
     def _sync_collection(
         self,
         collection_name: str,
-        incremental: bool,
-        since_marker: Optional[str],
+        incremental: bool = False,
+        since_marker: Optional[str] = None,
     ) -> CollectionStats:
         """Sync a single collection: Tally -> Python batch -> SQL."""
         stats = CollectionStats(name=collection_name)
@@ -200,7 +203,12 @@ class MigrationPipeline:
 
         mapping = self._mapper.get(collection_name) if self._mapper else None
         if mapping is None:
-            logger.warning("No mapping for '%s' - skipping.", collection_name)
+            logger.error("No mapping for collection '%s' - marking collection sync failed.", collection_name)
+            error_msg = f"Collection '{collection_name}' has no schema mapping"
+            stats.errors.append(error_msg)
+            stats.rows_failed += 1
+            if self._state_manager and not self.dry_run:
+                self._state_manager.mark_failed(collection_name, self.run_id, error_msg)
             return stats
 
         last_successful_marker: Optional[str] = since_marker
@@ -221,13 +229,17 @@ class MigrationPipeline:
             for raw_record in records_gen:
                 stats.rows_read += 1
                 transformed = self._transform_record(raw_record, mapping)
-                if transformed:
+                if transformed is not None:
                     batch.append((raw_record, transformed))
                     marker_field = mapping.change_marker
                     if marker_field and marker_field in transformed:
                         candidate = str(transformed[marker_field] or "")
                         if candidate and _is_higher_marker(candidate, batch_high_marker):
                             batch_high_marker = candidate
+                else:
+                    stats.rows_failed += 1
+                    error_occurred = True
+                    error_msg = f"Record transformation failed in {collection_name}"
 
                 # Flush batch when full
                 if len(batch) >= batch_size:
@@ -323,6 +335,8 @@ class MigrationPipeline:
         bill_allocations: list[dict] = []
         bank_entries: list[dict] = []
         batch_allocations: list[dict] = []
+        cost_centre_allocations: list[dict] = []
+        accounting_allocations: list[dict] = []
 
         for raw, transformed in batch:
             v_guid = transformed.get("guid")
@@ -330,15 +344,20 @@ class MigrationPipeline:
                 continue
             voucher_guids.append(v_guid)
 
+            has_nested_bills = False
+            has_nested_bank = False
+            has_nested_batches = False
+
             # Ledger legs
             raw_legs = raw.get("ALLLEDGERENTRIES.LIST") or raw.get("LEDGERENTRIES.LIST") or []
             if isinstance(raw_legs, dict):
                 raw_legs = [raw_legs]
             for leg in raw_legs:
                 if isinstance(leg, dict):
+                    leg_name = str(leg.get("LEDGERNAME") or leg.get("NAME") or "")
                     ledger_entries.append({
                         "voucher_guid": v_guid,
-                        "ledger_name": str(leg.get("LEDGERNAME") or leg.get("NAME") or ""),
+                        "ledger_name": leg_name,
                         "amount": transform_amount(leg.get("AMOUNT")),
                         "is_party": transform_boolean(leg.get("ISPARTYLEDGER")),
                         "currency_name": transform_text(leg.get("CURRENCYNAME")),
@@ -347,15 +366,61 @@ class MigrationPipeline:
                         "gst_class": transform_text(leg.get("GSTCLASS")),
                     })
 
+                    # Cost Centre Allocations under ledger entry
+                    raw_cc = leg.get("COSTCENTREALLOCATIONS.LIST") or leg.get("CATEGORYALLOCATIONS.LIST") or []
+                    if isinstance(raw_cc, dict):
+                        raw_cc = [raw_cc]
+                    for cc in raw_cc:
+                        if isinstance(cc, dict):
+                            cost_centre_allocations.append({
+                                "voucher_guid": v_guid,
+                                "ledger_name": leg_name,
+                                "cost_category_name": transform_text(cc.get("CATEGORYNAME") or cc.get("COSTCATEGORYNAME")),
+                                "cost_centre_name": transform_text(cc.get("NAME") or cc.get("COSTCENTRENAME")),
+                                "amount": transform_amount(cc.get("AMOUNT")),
+                                "percentage": transform_amount(cc.get("PERCENTAGE")),
+                            })
+
+                    # Bill Allocations under ledger entry
+                    raw_leg_bills = leg.get("BILLALLOCATIONS.LIST") or []
+                    if isinstance(raw_leg_bills, dict):
+                        raw_leg_bills = [raw_leg_bills]
+                    for bill in raw_leg_bills:
+                        if isinstance(bill, dict):
+                            has_nested_bills = True
+                            bill_allocations.append({
+                                "voucher_guid": v_guid,
+                                "bill_name": str(bill.get("NAME") or ""),
+                                "bill_type": transform_text(bill.get("BILLTYPE")),
+                                "amount": transform_amount(bill.get("AMOUNT")),
+                                "due_date": transform_date(bill.get("DUEDATE")),
+                            })
+
+                    # Bank Allocations under ledger entry
+                    raw_leg_bank = leg.get("BANKALLOCATIONS.LIST") or []
+                    if isinstance(raw_leg_bank, dict):
+                        raw_leg_bank = [raw_leg_bank]
+                    for b in raw_leg_bank:
+                        if isinstance(b, dict):
+                            has_nested_bank = True
+                            bank_entries.append({
+                                "voucher_guid": v_guid,
+                                "instrument_date": transform_date(b.get("INSTRUMENTDATE")),
+                                "instrument_number": transform_text(b.get("INSTRUMENTNUMBER")),
+                                "bank_name": transform_text(b.get("BANKNAME")),
+                                "amount": transform_amount(b.get("AMOUNT")),
+                            })
+
             # Inventory legs
             raw_inv = raw.get("ALLINVENTORYENTRIES.LIST") or raw.get("INVENTORYENTRIES.LIST") or []
             if isinstance(raw_inv, dict):
                 raw_inv = [raw_inv]
             for inv in raw_inv:
                 if isinstance(inv, dict):
+                    item_name = str(inv.get("STOCKITEMNAME") or "")
                     inventory_entries.append({
                         "voucher_guid": v_guid,
-                        "stock_item_name": str(inv.get("STOCKITEMNAME") or ""),
+                        "stock_item_name": item_name,
                         "quantity": transform_quantity(inv.get("ACTUALQTY") or inv.get("BILLEDQTY") or inv.get("QUANTITY")),
                         "rate": transform_amount(inv.get("RATE")),
                         "amount": transform_amount(inv.get("AMOUNT")),
@@ -365,49 +430,82 @@ class MigrationPipeline:
                         "tracking_number": transform_text(inv.get("TRACKINGNUMBER")),
                     })
 
-            # Bill allocations
-            raw_bills = raw.get("BILLALLOCATIONS.LIST") or []
-            if isinstance(raw_bills, dict):
-                raw_bills = [raw_bills]
-            for bill in raw_bills:
-                if isinstance(bill, dict):
-                    bill_allocations.append({
-                        "voucher_guid": v_guid,
-                        "bill_name": str(bill.get("NAME") or ""),
-                        "bill_type": transform_text(bill.get("BILLTYPE")),
-                        "amount": transform_amount(bill.get("AMOUNT")),
-                        "due_date": transform_date(bill.get("DUEDATE")),
-                    })
+                    # Batch Allocations under inventory entry
+                    raw_inv_batches = inv.get("BATCHALLOCATIONS.LIST") or []
+                    if isinstance(raw_inv_batches, dict):
+                        raw_inv_batches = [raw_inv_batches]
+                    for ba in raw_inv_batches:
+                        if isinstance(ba, dict):
+                            has_nested_batches = True
+                            batch_allocations.append({
+                                "voucher_guid": v_guid,
+                                "batch_name": transform_text(ba.get("BATCHNAME")),
+                                "destination_godown": transform_text(ba.get("DESTINATIONGODOWN")),
+                                "quantity": transform_quantity(ba.get("ACTUALQTY") or ba.get("QUANTITY")),
+                                "amount": transform_amount(ba.get("AMOUNT")),
+                                "manufactured_on": transform_date(ba.get("MFDON")),
+                                "expiry_period": transform_text(ba.get("EXPIRYPERIOD")),
+                            })
 
-            # Bank entries
-            raw_bank = raw.get("BANKALLOCATIONS.LIST") or []
-            if isinstance(raw_bank, dict):
-                raw_bank = [raw_bank]
-            for b in raw_bank:
-                if isinstance(b, dict):
-                    bank_entries.append({
-                        "voucher_guid": v_guid,
-                        "instrument_date": transform_date(b.get("INSTRUMENTDATE")),
-                        "instrument_number": transform_text(b.get("INSTRUMENTNUMBER")),
-                        "bank_name": transform_text(b.get("BANKNAME")),
-                        "amount": transform_amount(b.get("AMOUNT")),
-                    })
+                    # Accounting Allocations under inventory entry
+                    raw_acc = inv.get("ACCOUNTINGALLOCATIONS.LIST") or []
+                    if isinstance(raw_acc, dict):
+                        raw_acc = [raw_acc]
+                    for acc in raw_acc:
+                        if isinstance(acc, dict):
+                            accounting_allocations.append({
+                                "voucher_guid": v_guid,
+                                "stock_item_name": item_name,
+                                "ledger_name": transform_text(acc.get("LEDGERNAME") or acc.get("NAME")),
+                                "amount": transform_amount(acc.get("AMOUNT")),
+                            })
 
-            # Batch allocations
-            raw_batches = raw.get("BATCHALLOCATIONS.LIST") or []
-            if isinstance(raw_batches, dict):
-                raw_batches = [raw_batches]
-            for ba in raw_batches:
-                if isinstance(ba, dict):
-                    batch_allocations.append({
-                        "voucher_guid": v_guid,
-                        "batch_name": transform_text(ba.get("BATCHNAME")),
-                        "destination_godown": transform_text(ba.get("DESTINATIONGODOWN")),
-                        "quantity": transform_quantity(ba.get("ACTUALQTY") or ba.get("QUANTITY")),
-                        "amount": transform_amount(ba.get("AMOUNT")),
-                        "manufactured_on": transform_date(ba.get("MFDON")),
-                        "expiry_period": transform_text(ba.get("EXPIRYPERIOD")),
-                    })
+            # Root-level Bill allocations fallback
+            if not has_nested_bills:
+                raw_bills = raw.get("BILLALLOCATIONS.LIST") or []
+                if isinstance(raw_bills, dict):
+                    raw_bills = [raw_bills]
+                for bill in raw_bills:
+                    if isinstance(bill, dict):
+                        bill_allocations.append({
+                            "voucher_guid": v_guid,
+                            "bill_name": str(bill.get("NAME") or ""),
+                            "bill_type": transform_text(bill.get("BILLTYPE")),
+                            "amount": transform_amount(bill.get("AMOUNT")),
+                            "due_date": transform_date(bill.get("DUEDATE")),
+                        })
+
+            # Root-level Bank entries fallback
+            if not has_nested_bank:
+                raw_bank = raw.get("BANKALLOCATIONS.LIST") or []
+                if isinstance(raw_bank, dict):
+                    raw_bank = [raw_bank]
+                for b in raw_bank:
+                    if isinstance(b, dict):
+                        bank_entries.append({
+                            "voucher_guid": v_guid,
+                            "instrument_date": transform_date(b.get("INSTRUMENTDATE")),
+                            "instrument_number": transform_text(b.get("INSTRUMENTNUMBER")),
+                            "bank_name": transform_text(b.get("BANKNAME")),
+                            "amount": transform_amount(b.get("AMOUNT")),
+                        })
+
+            # Root-level Batch allocations fallback
+            if not has_nested_batches:
+                raw_batches = raw.get("BATCHALLOCATIONS.LIST") or []
+                if isinstance(raw_batches, dict):
+                    raw_batches = [raw_batches]
+                for ba in raw_batches:
+                    if isinstance(ba, dict):
+                        batch_allocations.append({
+                            "voucher_guid": v_guid,
+                            "batch_name": transform_text(ba.get("BATCHNAME")),
+                            "destination_godown": transform_text(ba.get("DESTINATIONGODOWN")),
+                            "quantity": transform_quantity(ba.get("ACTUALQTY") or ba.get("QUANTITY")),
+                            "amount": transform_amount(ba.get("AMOUNT")),
+                            "manufactured_on": transform_date(ba.get("MFDON")),
+                            "expiry_period": transform_text(ba.get("EXPIRYPERIOD")),
+                        })
 
         if not voucher_guids:
             return
@@ -419,27 +517,34 @@ class MigrationPipeline:
             ("voucher_bill_allocation", bill_allocations),
             ("voucher_bank_entry", bank_entries),
             ("voucher_batch_allocation", batch_allocations),
+            ("voucher_cost_centre_allocation", cost_centre_allocations),
+            ("voucher_accounting_allocation", accounting_allocations),
         ]
 
-        # Purge existing sub-entries for these vouchers and bulk insert fresh ones
-        guids_str = ", ".join(f"'{g}'" for g in voucher_guids)
-        cursor = self._sql.cursor()
-        try:
-            for tbl_name, entries in sub_tables:
-                if not entries:
-                    continue
-                try:
-                    cursor.execute(f"DELETE FROM [{schema_name}].[{tbl_name}] WHERE [voucher_guid] IN ({guids_str})")
-                    self._sql.commit()
-                except Exception as exc:
-                    logger.debug("Clean sub-table %s delete skipped: %s", tbl_name, exc)
+        # Transactional sub-table replacement with parameterized deletes
+        with self._sql.transaction():
+            cursor = self._sql.cursor()
+            try:
+                for tbl_name, entries in sub_tables:
+                    self._delete_voucher_children(cursor, schema_name, tbl_name, voucher_guids)
+                    if entries:
+                        engine = BatchUpsertEngine(self._sql, schema_name, tbl_name, "id", run_id=self.run_id)
+                        engine.bulk_insert(entries, dry_run=self.dry_run)
+            finally:
+                cursor.close()
 
-                engine = BatchUpsertEngine(self._sql, schema_name, tbl_name, "id", run_id=self.run_id)
-                engine.bulk_insert(entries, dry_run=self.dry_run)
-            cursor.close()
-        except Exception as exc:
-            cursor.close()
-            logger.error("Failed persisting voucher child collections: %s", exc)
+    def _delete_voucher_children(
+        self, cursor, schema_name: str, table_name: str, voucher_guids: list[str]
+    ) -> None:
+        """Execute chunked parameterized DELETE to stay under SQL parameter limits."""
+        if not voucher_guids:
+            return
+        chunk_size = 900
+        for i in range(0, len(voucher_guids), chunk_size):
+            chunk = voucher_guids[i : i + chunk_size]
+            placeholders = ", ".join("?" for _ in chunk)
+            sql = f"DELETE FROM [{schema_name}].[{table_name}] WHERE [voucher_guid] IN ({placeholders})"
+            cursor.execute(sql, chunk)
 
     def _transform_record(
         self, raw_record: dict, mapping

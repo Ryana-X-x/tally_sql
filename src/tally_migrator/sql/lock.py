@@ -141,19 +141,22 @@ class SQLProcessLock:
             raise
         except Exception as exc:
             cursor.close()
-            logger.warning("Lock acquire failed (non-fatal): %s", exc)
+            logger.error("Lock acquire failed: %s", exc)
+            raise LockError(f"Failed to acquire lock due to database error: {exc}") from exc
 
     def release(self) -> None:
-        """Release the process lock."""
+        """Release the process lock if held by this instance."""
+        if not self._lock_holder:
+            return
         try:
             cursor = self.sql.cursor()
             cursor.execute(
-                f"DELETE FROM {self._table_ref()} WHERE lock_name = ?",
-                (self.lock_name,),
+                f"DELETE FROM {self._table_ref()} WHERE lock_name = ? AND locked_by = ?",
+                (self.lock_name, self._lock_holder),
             )
             self.sql.commit()
             cursor.close()
-            logger.debug("Lock '%s' released.", self.lock_name)
+            logger.debug("Lock '%s' released by %s.", self.lock_name, self._lock_holder)
             self._lock_holder = None
         except Exception as exc:
             logger.warning("Lock release failed: %s", exc)

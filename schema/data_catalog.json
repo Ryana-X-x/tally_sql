@@ -1,0 +1,689 @@
+{
+  "version": "1.0",
+  "generated_at": "2026-10-02T09:57:23.805634+00:00",
+  "source": {
+    "schema_file": "schema/discovered_schema.json"
+  },
+  "collections_count": 7,
+  "collections": {
+    "voucher_ledger_entry": {
+      "collection_name": "voucher_ledger_entry",
+      "category": "child",
+      "sql_table_name": "voucher_ledger_entry",
+      "parent_collection": "Voucher",
+      "foreign_key": [
+        "voucher_guid",
+        "voucher",
+        "guid"
+      ],
+      "description": "Ledger entries (debit/credit legs) within each voucher",
+      "fields": {
+        "id": {
+          "name": "id",
+          "tally_type": "text",
+          "sql_column": "id",
+          "sql_type": "BIGINT IDENTITY(1,1)",
+          "nullable": false,
+          "is_primary_key": true,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "voucher_guid": {
+          "name": "voucher_guid",
+          "tally_type": "text",
+          "sql_column": "voucher_guid",
+          "sql_type": "NVARCHAR(64)",
+          "nullable": false,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "ledger_name": {
+          "name": "ledger_name",
+          "tally_type": "text",
+          "sql_column": "ledger_name",
+          "sql_type": "NVARCHAR(255)",
+          "nullable": false,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "amount": {
+          "name": "amount",
+          "tally_type": "text",
+          "sql_column": "amount",
+          "sql_type": "DECIMAL(20,4)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "is_party": {
+          "name": "is_party",
+          "tally_type": "text",
+          "sql_column": "is_party",
+          "sql_type": "BIT",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "currency_name": {
+          "name": "currency_name",
+          "tally_type": "text",
+          "sql_column": "currency_name",
+          "sql_type": "NVARCHAR(50)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "forex_amount": {
+          "name": "forex_amount",
+          "tally_type": "text",
+          "sql_column": "forex_amount",
+          "sql_type": "DECIMAL(20,4)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "entry_type": {
+          "name": "entry_type",
+          "tally_type": "text",
+          "sql_column": "entry_type",
+          "sql_type": "NVARCHAR(10)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "gst_class": {
+          "name": "gst_class",
+          "tally_type": "text",
+          "sql_column": "gst_class",
+          "sql_type": "NVARCHAR(100)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        }
+      },
+      "unmapped_field_preservation": "raw_unmapped_json",
+      "udf_preservation": "raw_unmapped_json"
+    },
+    "voucher_inventory_entry": {
+      "collection_name": "voucher_inventory_entry",
+      "category": "child",
+      "sql_table_name": "voucher_inventory_entry",
+      "parent_collection": "Voucher",
+      "foreign_key": [
+        "voucher_guid",
+        "voucher",
+        "guid"
+      ],
+      "description": "Inventory (stock) entries within each voucher",
+      "fields": {
+        "id": {
+          "name": "id",
+          "tally_type": "text",
+          "sql_column": "id",
+          "sql_type": "BIGINT IDENTITY(1,1)",
+          "nullable": false,
+          "is_primary_key": true,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "voucher_guid": {
+          "name": "voucher_guid",
+          "tally_type": "text",
+          "sql_column": "voucher_guid",
+          "sql_type": "NVARCHAR(64)",
+          "nullable": false,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "stock_item_name": {
+          "name": "stock_item_name",
+          "tally_type": "text",
+          "sql_column": "stock_item_name",
+          "sql_type": "NVARCHAR(255)",
+          "nullable": false,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "quantity": {
+          "name": "quantity",
+          "tally_type": "text",
+          "sql_column": "quantity",
+          "sql_type": "DECIMAL(20,4)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "rate": {
+          "name": "rate",
+          "tally_type": "text",
+          "sql_column": "rate",
+          "sql_type": "DECIMAL(20,6)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "amount": {
+          "name": "amount",
+          "tally_type": "text",
+          "sql_column": "amount",
+          "sql_type": "DECIMAL(20,4)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "uom": {
+          "name": "uom",
+          "tally_type": "text",
+          "sql_column": "uom",
+          "sql_type": "NVARCHAR(50)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "godown_name": {
+          "name": "godown_name",
+          "tally_type": "text",
+          "sql_column": "godown_name",
+          "sql_type": "NVARCHAR(255)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "batch_name": {
+          "name": "batch_name",
+          "tally_type": "text",
+          "sql_column": "batch_name",
+          "sql_type": "NVARCHAR(255)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "tracking_number": {
+          "name": "tracking_number",
+          "tally_type": "text",
+          "sql_column": "tracking_number",
+          "sql_type": "NVARCHAR(100)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        }
+      },
+      "unmapped_field_preservation": "raw_unmapped_json",
+      "udf_preservation": "raw_unmapped_json"
+    },
+    "voucher_bill_allocation": {
+      "collection_name": "voucher_bill_allocation",
+      "category": "child",
+      "sql_table_name": "voucher_bill_allocation",
+      "parent_collection": "Voucher",
+      "foreign_key": [
+        "voucher_guid",
+        "voucher",
+        "guid"
+      ],
+      "description": "Bill/reference allocations within each voucher",
+      "fields": {
+        "id": {
+          "name": "id",
+          "tally_type": "text",
+          "sql_column": "id",
+          "sql_type": "BIGINT IDENTITY(1,1)",
+          "nullable": false,
+          "is_primary_key": true,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "voucher_guid": {
+          "name": "voucher_guid",
+          "tally_type": "text",
+          "sql_column": "voucher_guid",
+          "sql_type": "NVARCHAR(64)",
+          "nullable": false,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "bill_name": {
+          "name": "bill_name",
+          "tally_type": "text",
+          "sql_column": "bill_name",
+          "sql_type": "NVARCHAR(255)",
+          "nullable": false,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "bill_type": {
+          "name": "bill_type",
+          "tally_type": "text",
+          "sql_column": "bill_type",
+          "sql_type": "NVARCHAR(50)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "amount": {
+          "name": "amount",
+          "tally_type": "text",
+          "sql_column": "amount",
+          "sql_type": "DECIMAL(20,4)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "due_date": {
+          "name": "due_date",
+          "tally_type": "text",
+          "sql_column": "due_date",
+          "sql_type": "DATE",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        }
+      },
+      "unmapped_field_preservation": "raw_unmapped_json",
+      "udf_preservation": "raw_unmapped_json"
+    },
+    "voucher_bank_entry": {
+      "collection_name": "voucher_bank_entry",
+      "category": "child",
+      "sql_table_name": "voucher_bank_entry",
+      "parent_collection": "Voucher",
+      "foreign_key": [
+        "voucher_guid",
+        "voucher",
+        "guid"
+      ],
+      "description": "Bank/instrument entries within each voucher",
+      "fields": {
+        "id": {
+          "name": "id",
+          "tally_type": "text",
+          "sql_column": "id",
+          "sql_type": "BIGINT IDENTITY(1,1)",
+          "nullable": false,
+          "is_primary_key": true,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "voucher_guid": {
+          "name": "voucher_guid",
+          "tally_type": "text",
+          "sql_column": "voucher_guid",
+          "sql_type": "NVARCHAR(64)",
+          "nullable": false,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "instrument_date": {
+          "name": "instrument_date",
+          "tally_type": "text",
+          "sql_column": "instrument_date",
+          "sql_type": "DATE",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "instrument_number": {
+          "name": "instrument_number",
+          "tally_type": "text",
+          "sql_column": "instrument_number",
+          "sql_type": "NVARCHAR(100)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "bank_name": {
+          "name": "bank_name",
+          "tally_type": "text",
+          "sql_column": "bank_name",
+          "sql_type": "NVARCHAR(255)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "amount": {
+          "name": "amount",
+          "tally_type": "text",
+          "sql_column": "amount",
+          "sql_type": "DECIMAL(20,4)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        }
+      },
+      "unmapped_field_preservation": "raw_unmapped_json",
+      "udf_preservation": "raw_unmapped_json"
+    },
+    "voucher_batch_allocation": {
+      "collection_name": "voucher_batch_allocation",
+      "category": "child",
+      "sql_table_name": "voucher_batch_allocation",
+      "parent_collection": "Voucher",
+      "foreign_key": [
+        "voucher_guid",
+        "voucher",
+        "guid"
+      ],
+      "description": "Batch/lot allocations within each voucher inventory entry",
+      "fields": {
+        "id": {
+          "name": "id",
+          "tally_type": "text",
+          "sql_column": "id",
+          "sql_type": "BIGINT IDENTITY(1,1)",
+          "nullable": false,
+          "is_primary_key": true,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "voucher_guid": {
+          "name": "voucher_guid",
+          "tally_type": "text",
+          "sql_column": "voucher_guid",
+          "sql_type": "NVARCHAR(64)",
+          "nullable": false,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "batch_name": {
+          "name": "batch_name",
+          "tally_type": "text",
+          "sql_column": "batch_name",
+          "sql_type": "NVARCHAR(255)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "destination_godown": {
+          "name": "destination_godown",
+          "tally_type": "text",
+          "sql_column": "destination_godown",
+          "sql_type": "NVARCHAR(255)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "quantity": {
+          "name": "quantity",
+          "tally_type": "text",
+          "sql_column": "quantity",
+          "sql_type": "DECIMAL(20,4)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "amount": {
+          "name": "amount",
+          "tally_type": "text",
+          "sql_column": "amount",
+          "sql_type": "DECIMAL(20,4)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "manufactured_on": {
+          "name": "manufactured_on",
+          "tally_type": "text",
+          "sql_column": "manufactured_on",
+          "sql_type": "DATE",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "expiry_period": {
+          "name": "expiry_period",
+          "tally_type": "text",
+          "sql_column": "expiry_period",
+          "sql_type": "NVARCHAR(50)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        }
+      },
+      "unmapped_field_preservation": "raw_unmapped_json",
+      "udf_preservation": "raw_unmapped_json"
+    },
+    "voucher_cost_centre_allocation": {
+      "collection_name": "voucher_cost_centre_allocation",
+      "category": "child",
+      "sql_table_name": "voucher_cost_centre_allocation",
+      "parent_collection": "Voucher",
+      "foreign_key": [
+        "voucher_guid",
+        "voucher",
+        "guid"
+      ],
+      "description": "Cost Centre allocations within each voucher or ledger entry",
+      "fields": {
+        "id": {
+          "name": "id",
+          "tally_type": "text",
+          "sql_column": "id",
+          "sql_type": "BIGINT IDENTITY(1,1)",
+          "nullable": false,
+          "is_primary_key": true,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "voucher_guid": {
+          "name": "voucher_guid",
+          "tally_type": "text",
+          "sql_column": "voucher_guid",
+          "sql_type": "NVARCHAR(64)",
+          "nullable": false,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "ledger_name": {
+          "name": "ledger_name",
+          "tally_type": "text",
+          "sql_column": "ledger_name",
+          "sql_type": "NVARCHAR(255)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "cost_category_name": {
+          "name": "cost_category_name",
+          "tally_type": "text",
+          "sql_column": "cost_category_name",
+          "sql_type": "NVARCHAR(255)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "cost_centre_name": {
+          "name": "cost_centre_name",
+          "tally_type": "text",
+          "sql_column": "cost_centre_name",
+          "sql_type": "NVARCHAR(255)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "amount": {
+          "name": "amount",
+          "tally_type": "text",
+          "sql_column": "amount",
+          "sql_type": "DECIMAL(20,4)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "percentage": {
+          "name": "percentage",
+          "tally_type": "text",
+          "sql_column": "percentage",
+          "sql_type": "DECIMAL(10,4)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        }
+      },
+      "unmapped_field_preservation": "raw_unmapped_json",
+      "udf_preservation": "raw_unmapped_json"
+    },
+    "voucher_accounting_allocation": {
+      "collection_name": "voucher_accounting_allocation",
+      "category": "child",
+      "sql_table_name": "voucher_accounting_allocation",
+      "parent_collection": "Voucher",
+      "foreign_key": [
+        "voucher_guid",
+        "voucher",
+        "guid"
+      ],
+      "description": "Accounting allocations within voucher inventory entries",
+      "fields": {
+        "id": {
+          "name": "id",
+          "tally_type": "text",
+          "sql_column": "id",
+          "sql_type": "BIGINT IDENTITY(1,1)",
+          "nullable": false,
+          "is_primary_key": true,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "voucher_guid": {
+          "name": "voucher_guid",
+          "tally_type": "text",
+          "sql_column": "voucher_guid",
+          "sql_type": "NVARCHAR(64)",
+          "nullable": false,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "stock_item_name": {
+          "name": "stock_item_name",
+          "tally_type": "text",
+          "sql_column": "stock_item_name",
+          "sql_type": "NVARCHAR(255)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "ledger_name": {
+          "name": "ledger_name",
+          "tally_type": "text",
+          "sql_column": "ledger_name",
+          "sql_type": "NVARCHAR(255)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        },
+        "amount": {
+          "name": "amount",
+          "tally_type": "text",
+          "sql_column": "amount",
+          "sql_type": "DECIMAL(20,4)",
+          "nullable": true,
+          "is_primary_key": false,
+          "is_change_marker": false,
+          "preservation_strategy": "explicit_column",
+          "status": "mapped"
+        }
+      },
+      "unmapped_field_preservation": "raw_unmapped_json",
+      "udf_preservation": "raw_unmapped_json"
+    }
+  },
+  "preservation_rules": {
+    "known_fields": "mapped_to_sql_columns",
+    "unmapped_fields": "serialized_in_raw_unmapped_json",
+    "udf_fields": "serialized_in_raw_unmapped_json",
+    "nested_unknown_structures": "serialized_in_raw_unmapped_json"
+  }
+}

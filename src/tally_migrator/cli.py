@@ -206,6 +206,56 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_catalog(args: argparse.Namespace) -> int:
+    from tally_migrator.schema.catalog import DataCatalogGenerator
+
+    cfg = get_config()
+    print("Generating Tally Data Catalog ...")
+    gen = DataCatalogGenerator(cfg.migration.schema_dir)
+    cat = gen.generate()
+    print(f"Data catalog generated at: {gen.catalog_path}")
+    print(f"Total collections cataloged: {cat['collections_count']}")
+    return 0
+
+
+def _cmd_coverage(args: argparse.Namespace) -> int:
+    from tally_migrator.reports.coverage import CoverageReporter
+    from tally_migrator.sql.connection import SQLConnection
+
+    cfg = get_config()
+    sql = None
+    try:
+        sql = SQLConnection(cfg.sql)
+    except Exception:
+        pass
+
+    reporter = CoverageReporter(cfg, sql_conn=sql)
+    report = reporter.generate_report()
+    print(report)
+    if sql:
+        sql.close()
+    return 0
+
+
+def _cmd_reconcile(args: argparse.Namespace) -> int:
+    from tally_migrator.reports.reconcile import Reconciler
+    from tally_migrator.sql.connection import SQLConnection
+
+    cfg = get_config()
+    sql = None
+    try:
+        sql = SQLConnection(cfg.sql)
+    except Exception:
+        pass
+
+    reconciler = Reconciler(cfg, sql_conn=sql)
+    report = reconciler.reconcile()
+    print(report)
+    if sql:
+        sql.close()
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
@@ -219,6 +269,9 @@ def _build_parser() -> argparse.ArgumentParser:
             "Examples:\n"
             "  python -m tally_migrator test-connection\n"
             "  python -m tally_migrator discover\n"
+            "  python -m tally_migrator catalog\n"
+            "  python -m tally_migrator coverage\n"
+            "  python -m tally_migrator reconcile\n"
             "  python -m tally_migrator generate-schema --apply\n"
             "  python -m tally_migrator full-sync\n"
             "  python -m tally_migrator incremental-sync\n"
@@ -238,6 +291,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # discover
     sub.add_parser("discover", help="Discover Tally collections and schema metadata")
+
+    # catalog
+    sub.add_parser("catalog", help="Generate persistent data_catalog.json metadata artifact")
+
+    # coverage
+    sub.add_parser("coverage", help="Display Tally data coverage report")
+
+    # reconcile
+    sub.add_parser("reconcile", help="Display source vs SQL target count reconciliation report")
 
     # validate-schema
     sub.add_parser("validate-schema", help="Validate discovered schema against SQL Server")
@@ -308,6 +370,9 @@ def main(argv: Optional[list[str]] = None) -> None:
     handlers = {
         "test-connection": _cmd_test_connection,
         "discover": _cmd_discover,
+        "catalog": _cmd_catalog,
+        "coverage": _cmd_coverage,
+        "reconcile": _cmd_reconcile,
         "validate-schema": _cmd_validate_schema,
         "generate-schema": _cmd_generate_schema,
         "dry-run": _cmd_dry_run,

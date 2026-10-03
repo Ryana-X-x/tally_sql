@@ -196,27 +196,23 @@ class BatchUpsertEngine:
         try:
             for record in records:
                 params = tuple(record.get(c) for c in all_cols)
-                try:
-                    cursor.execute(merge_sql, params)
-                    row = cursor.fetchone()
-                    if row:
-                        action = row[0]
-                        if action == "INSERT":
-                            inserted += 1
-                        elif action == "UPDATE":
-                            updated += 1
-                        else:
-                            unchanged += 1
+                cursor.execute(merge_sql, params)
+                row = cursor.fetchone()
+                if row:
+                    action = row[0]
+                    if action == "INSERT":
+                        inserted += 1
+                    elif action == "UPDATE":
+                        updated += 1
                     else:
                         unchanged += 1
-                except Exception as exc:
-                    logger.error("MERGE failed for record (key=%s): %s",
-                                 record.get(self.key_column), exc)
-                    continue
+                else:
+                    unchanged += 1
             cursor.close()
-        except Exception:
+        except Exception as exc:
             cursor.close()
-            raise
+            logger.error("MERGE statement failed for table '%s': %s", self.table_name, exc)
+            raise SQLExecutionError(self.table_name, "merge", str(exc)) from exc
 
         return UpsertResult(inserted=inserted, updated=updated, unchanged=unchanged)
 

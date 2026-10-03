@@ -121,16 +121,20 @@ class SchemaDiscovery:
             tally_company=self.config.tally.company_name,
         )
 
-        collection_names = self.client.list_collections()
-        logger.info("Discovered %d collections", len(collection_names))
+        try:
+            self.client.connect()
+            collection_names = self.client.list_collections()
+            logger.info("Discovered %d collections", len(collection_names))
 
-        for coll_name in collection_names:
-            logger.info("Discovering collection: %s", coll_name)
-            try:
-                coll = self._discover_collection(coll_name)
-                schema.collections[coll_name] = coll
-            except Exception as exc:
-                logger.warning("Failed to discover %s: %s", coll_name, exc)
+            for coll_name in collection_names:
+                logger.info("Discovering collection: %s", coll_name)
+                try:
+                    coll = self._discover_collection(coll_name)
+                    schema.collections[coll_name] = coll
+                except Exception as exc:
+                    logger.warning("Failed to discover %s: %s", coll_name, exc)
+        finally:
+            self.client.close()
 
         logger.info("Schema discovery complete. %d collections.", len(schema.collections))
         return schema

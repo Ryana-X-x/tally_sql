@@ -148,20 +148,22 @@ class SQLConnection:
             raise SQLExecutionError("<unknown>", "executemany", str(exc)) from exc
 
     def execute_script(self, sql: str) -> None:
-        """Execute a multi-statement SQL script (splits on GO)."""
-        cursor = self._conn.cursor()
-        # Split on GO statements
+        """Execute a multi-statement SQL script (splits on GO) transactionally."""
         import re
         statements = re.split(r"^\s*GO\s*$", sql, flags=re.MULTILINE | re.IGNORECASE)
-        for stmt in statements:
-            stmt = stmt.strip()
-            if stmt:
-                try:
+        cursor = self._conn.cursor()
+        try:
+            for stmt in statements:
+                stmt = stmt.strip()
+                if stmt:
                     cursor.execute(stmt)
-                    cursor.commit()
-                except pyodbc.Error as exc:
-                    logger.warning("Script statement failed (may be harmless): %s", exc)
-        cursor.close()
+            self._conn.commit()
+            cursor.close()
+        except Exception as exc:
+            self.rollback()
+            cursor.close()
+            logger.error("Script execution failed: %s", exc)
+            raise SQLExecutionError("<script>", "execute_script", str(exc)) from exc
 
     def table_exists(self, table_name: str, schema_name: Optional[str] = None) -> bool:
         """Check if a table exists in SQL Server."""

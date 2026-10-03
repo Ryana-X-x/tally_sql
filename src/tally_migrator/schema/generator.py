@@ -100,6 +100,32 @@ VOUCHER_SUB_TABLES = {
         "fk": ("voucher_guid", "voucher", "guid"),
         "indexes": ["voucher_guid"],
     },
+    "voucher_cost_centre_allocation": {
+        "description": "Cost Centre allocations within each voucher or ledger entry",
+        "columns": [
+            ("id", "BIGINT IDENTITY(1,1)", False, True),
+            ("voucher_guid", "NVARCHAR(64)", False, False),
+            ("ledger_name", "NVARCHAR(255)", True, False),
+            ("cost_category_name", "NVARCHAR(255)", True, False),
+            ("cost_centre_name", "NVARCHAR(255)", True, False),
+            ("amount", "DECIMAL(20,4)", True, False),
+            ("percentage", "DECIMAL(10,4)", True, False),
+        ],
+        "fk": ("voucher_guid", "voucher", "guid"),
+        "indexes": ["voucher_guid", "cost_centre_name"],
+    },
+    "voucher_accounting_allocation": {
+        "description": "Accounting allocations within voucher inventory entries",
+        "columns": [
+            ("id", "BIGINT IDENTITY(1,1)", False, True),
+            ("voucher_guid", "NVARCHAR(64)", False, False),
+            ("stock_item_name", "NVARCHAR(255)", True, False),
+            ("ledger_name", "NVARCHAR(255)", True, False),
+            ("amount", "DECIMAL(20,4)", True, False),
+        ],
+        "fk": ("voucher_guid", "voucher", "guid"),
+        "indexes": ["voucher_guid", "ledger_name"],
+    },
 }
 
 
@@ -252,7 +278,8 @@ GO
             if field_def.is_primary_key:
                 pk_fields.append(sql_col)
 
-        # Always add metadata columns
+        # Always add metadata & unmapped JSON columns
+        col_defs.append("        [raw_unmapped_json] NVARCHAR(MAX) NULL")
         col_defs.append("        [_imported_at] DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()")
         col_defs.append("        [_updated_at] DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()")
         col_defs.append("        [_run_id] NVARCHAR(50) NULL")

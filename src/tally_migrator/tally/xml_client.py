@@ -18,6 +18,7 @@ import logging
 import re
 from typing import Any, Generator, Optional
 from xml.etree import ElementTree as ET
+from xml.sax.saxutils import escape as _sax_escape
 
 try:
     import requests
@@ -132,7 +133,14 @@ KNOWN_COLLECTIONS: dict[str, dict] = {
 
 # ---------------------------------------------------------------------------
 # TDL XML templates
-# ---------------------------------------------------------------------------
+
+
+def _xml_escape(val: Any) -> str:
+    """Escape text for safe inclusion inside XML tags/attributes."""
+    if val is None:
+        return ""
+    return _sax_escape(str(val), {"'": "&apos;", '"': "&quot;"})
+
 
 COLLECTION_REQUEST_TEMPLATE = """<ENVELOPE>
   <HEADER>
@@ -154,6 +162,7 @@ COLLECTION_REQUEST_TEMPLATE = """<ENVELOPE>
             {field_clauses}
             {filter_clause}
           </COLLECTION>
+          {system_formula_clause}
         </TDLMESSAGE>
       </TDL>
     </DESC>
@@ -423,31 +432,44 @@ class XMLTallyClient(BaseTallyClient):
     ) -> str:
         """Build a TDL collection export XML request."""
         company_name = company or self.config.company_name
-        company_clause = COMPANY_CLAUSE.format(company=company_name) if company_name else ""
+        company_clause = COMPANY_CLAUSE.format(company=_xml_escape(company_name)) if company_name else ""
+
+        safe_collection_name = _xml_escape(collection_name)
 
         if fields:
+            fetch_list = list(fields)
+        else:
+            fetch_list = list(KNOWN_COLLECTIONS.get(collection_name, {}).get("fields", []))
+
+        if collection_name.upper() == "VOUCHER":
+            extra_voucher_fetches = [
+                "ALLLEDGERENTRIES.*", "ALLINVENTORYENTRIES.*",
+                "BILLALLOCATIONS.*", "BANKALLOCATIONS.*", "BATCHALLOCATIONS.*",
+                "CATEGORYALLOCATIONS.*", "COSTCENTREALLOCATIONS.*", "ACCOUNTINGALLOCATIONS.*",
+            ]
+            for ef in extra_voucher_fetches:
+                if ef not in fetch_list:
+                    fetch_list.append(ef)
+
+        if fetch_list:
             field_clauses = "\n            ".join(
-                FETCH_TEMPLATE.format(field=f) for f in fields
+                FETCH_TEMPLATE.format(field=_xml_escape(f)) for f in fetch_list
             )
         else:
-            known_fields = KNOWN_COLLECTIONS.get(collection_name, {}).get("fields", [])
-            if known_fields:
-                field_clauses = "\n            ".join(
-                    FETCH_TEMPLATE.format(field=f) for f in known_fields
-                )
-            else:
-                field_clauses = ""
+            field_clauses = ""
 
         filter_clause = ""
+        system_formula_clause = ""
         if filter_expr:
-            safe_filter = filter_expr.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            filter_clause = f"<FILTER>{safe_filter}</FILTER>"
+            filter_clause = "<FILTER>IncFilter</FILTER>"
+            system_formula_clause = f'<SYSTEM TYPE="Formulae" NAME="IncFilter">{_xml_escape(filter_expr)}</SYSTEM>'
 
         return COLLECTION_REQUEST_TEMPLATE.format(
-            collection_name=collection_name,
+            collection_name=safe_collection_name,
             company_clause=company_clause,
             field_clauses=field_clauses,
             filter_clause=filter_clause,
+            system_formula_clause=system_formula_clause,
         )
 
     def _parse_collection(self, xml_text: str, tag: str) -> list[dict[str, Any]]:
@@ -464,6 +486,11 @@ class XMLTallyClient(BaseTallyClient):
         parser = StreamingTallyXMLParser(target_tag)
         sanitizer = StreamingXMLSanitizer()
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+
+        def _verify_record(rec: dict[str, Any]) -> None:
+            if "LINEERROR" in rec or rec.get("STATUS") == "0" or "LINEERROR.LIST" in rec:
+                err_text = rec.get("LINEERROR") or rec.get("LINEERROR.LIST") or "Tally returned STATUS=0"
+                raise TallyQueryError(tag, f"Tally extraction failure: {err_text}")
 
         try:
             if isinstance(xml_source, str):
@@ -520,6 +547,7 @@ class XMLTallyClient(BaseTallyClient):
                 for elem in elements:
                     parsed = _parse_xml_element(elem)
                     if isinstance(parsed, dict):
+                        _verify_record(parsed)
                         yield parsed
                     elem.clear()
 
@@ -537,6 +565,7 @@ class XMLTallyClient(BaseTallyClient):
                 for elem in elements:
                     parsed = _parse_xml_element(elem)
                     if isinstance(parsed, dict):
+                        _verify_record(parsed)
                         yield parsed
                     elem.clear()
 
@@ -545,6 +574,7 @@ class XMLTallyClient(BaseTallyClient):
                 for elem in final_elements:
                     parsed = _parse_xml_element(elem)
                     if isinstance(parsed, dict):
+                        _verify_record(parsed)
                         yield parsed
                     elem.clear()
 
@@ -673,6 +703,8 @@ class StreamingTallyXMLParser:
             return
         elem = self._stack.pop()
         if name.upper() == self.target_tag:
+            if self._stack:
+                self._stack[-1].remove(elem)
             self._pending_records.append(elem)
 
     def _char_data(self, data: str) -> None:
